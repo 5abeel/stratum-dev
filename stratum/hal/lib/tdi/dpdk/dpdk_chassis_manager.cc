@@ -8,6 +8,7 @@
 #include <memory>
 #include <ostream>
 #include <set>
+#include <string>
 #include <utility>
 
 #include "absl/base/attributes.h"
@@ -16,6 +17,7 @@
 #include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/optional.h"
+#include "glog/log_severity.h"
 
 #include "stratum/glue/integral_types.h"
 #include "stratum/glue/logging.h"
@@ -26,19 +28,9 @@
 #include "stratum/hal/lib/common/utils.h"
 #include "stratum/hal/lib/common/writer_interface.h"
 #include "stratum/hal/lib/tdi/tdi_sde_interface.h"
+#include "stratum/hal/lib/tdi/dpdk/dpdk_port_config.h"
 #include "stratum/lib/macros.h"
 #include "stratum/public/proto/error.pb.h"
-
-// DPDK_TARGET: GnmiPortConfig
-#define GNMI_CONFIG_PORT_TYPE 0x01
-#define GNMI_CONFIG_DEVICE_TYPE 0x02
-#define GNMI_CONFIG_QUEUE_COUNT 0x04
-#define GNMI_CONFIG_SOCKET_PATH 0x08
-#define GNMI_CONFIG_HOST_NAME 0x10
-
-#define GNMI_CONFIG_TDI (GNMI_CONFIG_PORT_TYPE | GNMI_CONFIG_DEVICE_TYPE | \
-                         GNMI_CONFIG_QUEUE_COUNT | GNMI_CONFIG_SOCKET_PATH | \
-                         GNMI_CONFIG_HOST_NAME)
 
 namespace stratum {
 namespace hal {
@@ -66,7 +58,6 @@ DpdkChassisManager::DpdkChassisManager(
       node_id_to_port_id_to_singleton_port_key_(),
       node_id_to_port_id_to_sdk_port_id_(),
       node_id_to_sdk_port_id_to_port_id_(),
-      // DPDK_TARGET: GnmiPortConfig
       node_id_port_id_to_backend_(),
       sde_interface_(ABSL_DIE_IF_NULL(sde_interface)) {}
 
@@ -82,14 +73,10 @@ DpdkChassisManager::DpdkChassisManager()
       node_id_to_port_id_to_singleton_port_key_(),
       node_id_to_port_id_to_sdk_port_id_(),
       node_id_to_sdk_port_id_to_port_id_(),
-      // DPDK_TARGET: GnmiPortConfig
       node_id_port_id_to_backend_(),
       sde_interface_(nullptr) {}
 
 DpdkChassisManager::~DpdkChassisManager() = default;
-
-// DPDK_TARGET: GnmiPortConfig
-// DPDK_TARGET(dgf): Renamed from ValidateOneTimeConfig()
 
 // Determines whether the specified port configuration parameter has
 // already been set.
@@ -118,9 +105,6 @@ bool DpdkChassisManager::IsPortParamSet(
       return false;
   }
 }
-
-// DPDK_TARGET: GnmiPortConfig
-// DPDK_TARGET(dgf): Renamed from ValidateAndAdd().
 
 // Sets the value of a port configuration parameter.
 ::util::Status DpdkChassisManager::SetPortParam(
@@ -188,7 +172,7 @@ bool DpdkChassisManager::IsPortParamSet(
 ::util::Status DpdkChassisManager::AddPortHelper(
     uint64 node_id, int unit, uint32 sdk_port_id,
     const SingletonPort& singleton_port /* desired config */,
-    /* out */ PortConfig* config /* new config */) {
+    /* out */ DpdkPortConfig* config /* new config */) {
   config->admin_state = ADMIN_STATE_UNKNOWN;
   // SingletonPort ID is the SDN/Stratum port ID
   uint32 port_id = singleton_port.id();
@@ -212,7 +196,6 @@ bool DpdkChassisManager::IsPortParamSet(
   config->admin_state = ADMIN_STATE_DISABLED;
   config->fec_mode = config_params.fec_mode();
 
-  // DPDK_TARGET: GnmiPortConfig
   TdiSdeInterface::PortConfigParams sde_wrapper_config = {
     .port_type = config->port_type,
     .device_type = config->device_type,
@@ -259,8 +242,8 @@ bool DpdkChassisManager::IsPortParamSet(
 ::util::Status DpdkChassisManager::UpdatePortHelper(
     uint64 node_id, int unit, uint32 sdk_port_id,
     const SingletonPort& singleton_port /* desired config */,
-    const PortConfig& config_old /* current config */,
-    /* out */ PortConfig* config /* new config */) {
+    const DpdkPortConfig& config_old /* current config */,
+    /* out */ DpdkPortConfig* config /* new config */) {
   *config = config_old;
   // SingletonPort ID is the SDN/Stratum port ID
   uint32 port_id = singleton_port.id();
@@ -398,7 +381,7 @@ bool DpdkChassisManager::IsPortParamSet(
       node_id_to_port_id_to_port_state;
   std::map<uint64, std::map<uint32, absl::Time>>
       node_id_to_port_id_to_time_last_changed;
-  std::map<uint64, std::map<uint32, PortConfig>>
+  std::map<uint64, std::map<uint32, DpdkPortConfig>>
       node_id_to_port_id_to_port_config;
   std::map<uint64, std::map<uint32, PortKey>>
       node_id_to_port_id_to_singleton_port_key;
@@ -425,12 +408,11 @@ bool DpdkChassisManager::IsPortParamSet(
           << "Invalid ChassisConfig, unknown node id " << node_id
           << " for port " << port_id << ".";
     }
-    // DPDK_TARGET: GnmiPortConfig
     node_id_port_id_to_backend[node_id][port_id] = 0;
     node_id_to_port_id_to_port_state[node_id][port_id] = PORT_STATE_UNKNOWN;
     node_id_to_port_id_to_time_last_changed[node_id][port_id] =
         absl::UnixEpoch();
-    node_id_to_port_id_to_port_config[node_id][port_id] = PortConfig();
+    node_id_to_port_id_to_port_config[node_id][port_id] = DpdkPortConfig();
     PortKey singleton_port_key(singleton_port.slot(), singleton_port.port(),
                                singleton_port.channel());
     node_id_to_port_id_to_singleton_port_key[node_id][port_id] =
@@ -456,7 +438,7 @@ bool DpdkChassisManager::IsPortParamSet(
     // Stratum requires slot and port to be set. We use port and channel to
     // get Tofino device port (called SDK port ID).
 
-    const PortConfig* config_old = nullptr;
+    const DpdkPortConfig* config_old = nullptr;
     const auto* port_id_to_port_config_old =
         gtl::FindOrNull(node_id_to_port_id_to_port_config_, node_id);
     if (port_id_to_port_config_old != nullptr) {
@@ -467,15 +449,7 @@ bool DpdkChassisManager::IsPortParamSet(
     uint32 sdk_port_id = node_id_to_port_id_to_sdk_port_id[node_id][port_id];
     if (config_old == nullptr) {
       // new port
-#if 0
-      // DPDK_TARGET: AddNewPort
-      // if anything fails, config.admin_state will be set to
-      // ADMIN_STATE_UNKNOWN (invalid)
-      RETURN_IF_ERROR(
-          AddPortHelper(node_id, unit, sdk_port_id, singleton_port, &config));
-#else
       continue;
-#endif
     } else {
       // port already exists; config may have changed
       if (config_old->admin_state == ADMIN_STATE_UNKNOWN) {
@@ -688,13 +662,13 @@ bool DpdkChassisManager::IsPortParamSet(
   return ::util::OkStatus();
 }
 
-::util::StatusOr<const DpdkChassisManager::PortConfig*>
+::util::StatusOr<const DpdkPortConfig*>
 DpdkChassisManager::GetPortConfig(uint64 node_id, uint32 port_id) const {
   auto* port_id_to_config =
       gtl::FindOrNull(node_id_to_port_id_to_port_config_, node_id);
   CHECK_RETURN_IF_FALSE(port_id_to_config != nullptr)
       << "Node " << node_id << " is not configured or not known.";
-  const PortConfig* config = gtl::FindOrNull(*port_id_to_config, port_id);
+  const DpdkPortConfig* config = gtl::FindOrNull(*port_id_to_config, port_id);
   CHECK_RETURN_IF_FALSE(config != nullptr)
       << "Port " << port_id << " is not configured or not known for node "
       << node_id << ".";
@@ -927,8 +901,8 @@ DpdkChassisManager::GetPortConfig(uint64 node_id, uint32 port_id) const {
   LOG(INFO) << "Replaying ports for node " << node_id << ".";
 
   auto replay_one_port = [node_id, unit, this](
-                             uint32 port_id, const PortConfig& config,
-                             PortConfig* config_new) -> ::util::Status {
+                             uint32 port_id, const DpdkPortConfig& config,
+                             DpdkPortConfig* config_new) -> ::util::Status {
     VLOG(1) << "Replaying port " << port_id << " in node " << node_id << ".";
 
     if (config.admin_state == ADMIN_STATE_UNKNOWN) {
@@ -985,7 +959,7 @@ DpdkChassisManager::GetPortConfig(uint64 node_id, uint32 port_id) const {
 
   for (auto& p : node_id_to_port_id_to_port_config_[node_id]) {
     uint32 port_id = p.first;
-    PortConfig config_new;
+    DpdkPortConfig config_new;
     APPEND_STATUS_IF_ERROR(
         status, replay_one_port(port_id, p.second, &config_new));
     p.second = config_new;

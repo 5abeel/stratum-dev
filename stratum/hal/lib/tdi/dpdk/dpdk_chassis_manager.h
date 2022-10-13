@@ -7,11 +7,9 @@
 
 #include <map>
 #include <memory>
-#include <string>
 
 #include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
-#include "absl/types/optional.h"
 
 #include "stratum/glue/integral_types.h"
 #include "stratum/glue/status/status.h"
@@ -24,6 +22,8 @@
 namespace stratum {
 namespace hal {
 namespace tdi {
+
+struct DpdkPortConfig;
 
 // Lock which protects chassis state across the entire switch.
 extern absl::Mutex chassis_lock;
@@ -54,8 +54,8 @@ class DpdkChassisManager {
       uint64 node_id, uint32 port_id)
       SHARED_LOCKS_REQUIRED(chassis_lock);
 
-  virtual ::util::Status GetPortCounters(uint64 node_id, uint32 port_id,
-                                         PortCounters* counters)
+  virtual ::util::Status GetPortCounters(
+      uint64 node_id, uint32 port_id, PortCounters* counters)
       SHARED_LOCKS_REQUIRED(chassis_lock);
 
   virtual ::util::Status ReplayPortsConfig(uint64 node_id)
@@ -105,28 +105,6 @@ class DpdkChassisManager {
     std::unique_ptr<ChannelReader<T>> reader;
   };
 
-  struct PortConfig {
-    // ADMIN_STATE_UNKNOWN indicates that something went wrong during port
-    // configuration, and the port add failed or was not attempted.
-    AdminState admin_state;
-    absl::optional<uint64> speed_bps;  // empty if port add failed
-    absl::optional<int32> mtu;         // empty if MTU configuration failed
-    absl::optional<TriState> autoneg;  // empty if Autoneg configuration failed
-    absl::optional<FecMode> fec_mode;  // empty if port add failed
-    // empty if loopback mode configuration failed
-    absl::optional<LoopbackState> loopback_mode;
-    SWBackendPortType port_type;
-    SWBackendDeviceType device_type;
-    int32 queues;
-    std::string socket_path;
-    std::string host_name;
-
-    PortConfig() : admin_state(ADMIN_STATE_UNKNOWN),
-                   port_type(PORT_TYPE_NONE),
-                   device_type(DEVICE_TYPE_NONE),
-                   queues(0) {}
-  };
-
   // Maximum depth of port status change event channel.
   static constexpr int kMaxPortStatusEventDepth = 1024;
   static constexpr int kMaxXcvrEventDepth = 1024;
@@ -135,7 +113,7 @@ class DpdkChassisManager {
   // class.
   DpdkChassisManager(OperationMode mode, TdiSdeInterface* sde_interface);
 
-  ::util::StatusOr<const PortConfig*> GetPortConfig(
+  ::util::StatusOr<const DpdkPortConfig*> GetPortConfig(
       uint64 node_id, uint32 port_id) const
       SHARED_LOCKS_REQUIRED(chassis_lock);
 
@@ -155,13 +133,13 @@ class DpdkChassisManager {
   // helper to add / configure / enable a port with TdiSdeInterface
   ::util::Status AddPortHelper(
       uint64 node_id, int unit, uint32 port_id,
-      const SingletonPort& singleton_port, PortConfig* config);
+      const SingletonPort& singleton_port, DpdkPortConfig* config);
 
   // helper to update port configuration with TdiSdeInterface
   ::util::Status UpdatePortHelper(
       uint64 node_id, int unit, uint32 port_id,
       const SingletonPort& singleton_port,
-      const PortConfig& config_old, PortConfig* config);
+      const DpdkPortConfig& config_old, DpdkPortConfig* config);
 
   // Determines the mode of operation:
   // - OPERATION_MODE_STANDALONE: when Stratum stack runs independently and
@@ -200,7 +178,7 @@ class DpdkChassisManager {
   // We may change this once missing "get" methods get added to TdiSdeInterface,
   // as we would be able to rely on TdiSdeInterface to query config parameters,
   // instead of maintaining a "consistent" view in this map.
-  std::map<uint64, std::map<uint32, PortConfig>>
+  std::map<uint64, std::map<uint32, DpdkPortConfig>>
       node_id_to_port_id_to_port_config_ GUARDED_BY(chassis_lock);
 
   // Map from node ID to another map from port ID to PortKey corresponding
