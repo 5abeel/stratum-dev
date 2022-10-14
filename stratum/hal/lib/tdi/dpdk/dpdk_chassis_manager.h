@@ -200,10 +200,6 @@ class DpdkChassisManager {
   std::map<uint64, std::map<uint32, uint32>> node_id_to_sdk_port_id_to_port_id_
       GUARDED_BY(chassis_lock);
 
-  // TODO: document this member variable.
-  std::map<uint64, std::map<uint32, uint32>> node_id_port_id_to_backend_
-      GUARDED_BY(chassis_lock);
-
   // Pointer to a TdiSdeInterface implementation that wraps all the SDE calls.
   TdiSdeInterface* sde_interface_;  // not owned by this class.
 

@@ -58,7 +58,6 @@ DpdkChassisManager::DpdkChassisManager(
       node_id_to_port_id_to_singleton_port_key_(),
       node_id_to_port_id_to_sdk_port_id_(),
       node_id_to_sdk_port_id_to_port_id_(),
-      node_id_port_id_to_backend_(),
       sde_interface_(ABSL_DIE_IF_NULL(sde_interface)) {}
 
 DpdkChassisManager::DpdkChassisManager()
@@ -73,7 +72,6 @@ DpdkChassisManager::DpdkChassisManager()
       node_id_to_port_id_to_singleton_port_key_(),
       node_id_to_port_id_to_sdk_port_id_(),
       node_id_to_sdk_port_id_to_port_id_(),
-      node_id_port_id_to_backend_(),
       sde_interface_(nullptr) {}
 
 DpdkChassisManager::~DpdkChassisManager() = default;
@@ -84,26 +82,8 @@ bool DpdkChassisManager::IsPortParamSet(
     uint64 node_id, uint32 port_id,
     SetRequest::Request::Port::ValueCase value_case) {
 
-  uint32 validate = node_id_port_id_to_backend_[node_id][port_id];
-  switch (value_case) {
-    case SetRequest::Request::Port::ValueCase::kPortType:
-      return (validate & GNMI_CONFIG_PORT_TYPE) != 0;
-
-    case SetRequest::Request::Port::ValueCase::kDeviceType:
-      return (validate & GNMI_CONFIG_DEVICE_TYPE) != 0;
-
-    case SetRequest::Request::Port::ValueCase::kQueueCount:
-      return (validate & GNMI_CONFIG_QUEUE_COUNT) != 0;
-
-    case SetRequest::Request::Port::ValueCase::kSockPath:
-      return (validate & GNMI_CONFIG_SOCKET_PATH) != 0;
-
-    case SetRequest::Request::Port::ValueCase::kHostConfig:
-      return (validate & GNMI_CONFIG_HOST_NAME) != 0;
-
-    default:
-      return false;
-  }
+  auto& config = node_id_to_port_id_to_port_config_[node_id][port_id];
+  return config.IsParamSet(value_case);
 }
 
 // Sets the value of a port configuration parameter.
@@ -111,53 +91,18 @@ bool DpdkChassisManager::IsPortParamSet(
     uint64 node_id, uint32 port_id,
     const SingletonPort& singleton_port,
     SetRequest::Request::Port::ValueCase value_case) {
-  auto unit = node_id_to_unit_[node_id];
-  uint32 sdk_port_id = node_id_to_port_id_to_sdk_port_id_[node_id][port_id];
+
   auto& config = node_id_to_port_id_to_port_config_[node_id][port_id];
-  uint32 validate = node_id_port_id_to_backend_[node_id][port_id];
-  const auto& config_params = singleton_port.config_params();
+  config.SetParam(value_case, singleton_port);
 
-  switch (value_case) {
-    case SetRequest::Request::Port::ValueCase::kPortType:
-      validate |= GNMI_CONFIG_PORT_TYPE;
-      config.port_type = config_params.type();
-      LOG(INFO) << "SetPortParam::kPortType = " << config_params.type();
-      break;
-
-    case SetRequest::Request::Port::ValueCase::kDeviceType:
-      validate |= GNMI_CONFIG_DEVICE_TYPE;
-      config.device_type = config_params.device_type();
-      LOG(INFO) << "SetPortParam::kDeviceType = " << config_params.device_type();
-      break;
-
-    case SetRequest::Request::Port::ValueCase::kQueueCount:
-      validate |= GNMI_CONFIG_QUEUE_COUNT;
-      config.queues = config_params.queues();
-      LOG(INFO) << "SetPortParam::kQueueCount = " << config_params.queues();
-      break;
-
-    case SetRequest::Request::Port::ValueCase::kSockPath:
-      validate |= GNMI_CONFIG_SOCKET_PATH;
-      config.socket_path = config_params.socket();
-      LOG(INFO) << "SetPortParam::kSockPath = " << config_params.socket();
-      break;
-
-    case SetRequest::Request::Port::ValueCase::kHostConfig:
-      validate |= GNMI_CONFIG_HOST_NAME;
-      config.host_name = config_params.host_name();
-      LOG(INFO) << "SetPortParam::kHostConfig = " << config_params.host_name();
-      break;
-
-    default:
-      break;
-  }
-
-  node_id_port_id_to_backend_[node_id][port_id] = validate;
-  if (validate == GNMI_CONFIG_TDI) {
+  if (config.Contains(DPDK_GNMI_VHOST_REQUIRED)) {
       // Required parameters are configured
+      auto unit = node_id_to_unit_[node_id];
+      auto sdk_port_id = node_id_to_port_id_to_sdk_port_id_[node_id][port_id];
       LOG(INFO) << "Required parameters are configured, configure port via TDI";
       LOG(INFO) << "SDK_PORT ID while validating = " << sdk_port_id;
-      RETURN_IF_ERROR(AddPortHelper(node_id, unit, sdk_port_id, singleton_port, &config));
+      RETURN_IF_ERROR(
+	  AddPortHelper(node_id, unit, sdk_port_id, singleton_port, &config));
   }
   google::FlushLogFiles(google::INFO);
   return ::util::OkStatus();
@@ -179,12 +124,12 @@ bool DpdkChassisManager::IsPortParamSet(
 
   const auto& config_params = singleton_port.config_params();
   if (config_params.admin_state() == ADMIN_STATE_UNKNOWN) {
-    RETURN_ERROR(ERR_INVALID_PARAM)
+    return MAKE_ERROR(ERR_INVALID_PARAM)
         << "Invalid admin state for port " << port_id << " in node " << node_id
         << " (SDK Port " << sdk_port_id << ").";
   }
   if (config_params.admin_state() == ADMIN_STATE_DIAG) {
-    RETURN_ERROR(ERR_UNIMPLEMENTED)
+    return MAKE_ERROR(ERR_UNIMPLEMENTED)
         << "Unsupported 'diags' admin state for port " << port_id << " in node "
         << node_id << " (SDK Port " << sdk_port_id << ").";
   }
@@ -252,7 +197,7 @@ bool DpdkChassisManager::IsPortParamSet(
     config->admin_state = ADMIN_STATE_UNKNOWN;
     config->speed_bps.reset();
     config->fec_mode.reset();
-    RETURN_ERROR(ERR_INTERNAL)
+    return MAKE_ERROR(ERR_INTERNAL)
         << "Port " << port_id << " in node " << node_id << " is not valid"
         << " (SDK Port " << sdk_port_id << ").";
   }
@@ -281,7 +226,7 @@ bool DpdkChassisManager::IsPortParamSet(
       if (config_old.fec_mode)
         port_old.mutable_config_params()->set_fec_mode(*config_old.fec_mode);
       AddPortHelper(node_id, unit, sdk_port_id, port_old, config);
-      RETURN_ERROR(ERR_INVALID_PARAM)
+      return MAKE_ERROR(ERR_INVALID_PARAM)
           << "Could not add port " << port_id << " with new speed "
           << singleton_port.speed_bps() << " to BF SDE"
           << " (SDK Port " << sdk_port_id << ").";
@@ -290,19 +235,19 @@ bool DpdkChassisManager::IsPortParamSet(
 
   // same for FEC mode
   if (config_params.fec_mode() != config_old.fec_mode) {
-    RETURN_ERROR(ERR_UNIMPLEMENTED)
+    return MAKE_ERROR(ERR_UNIMPLEMENTED)
         << "The FEC mode for port " << port_id << " in node " << node_id
         << " has changed; you need to delete the port and add it again"
         << " (SDK Port " << sdk_port_id << ").";
   }
 
   if (config_params.admin_state() == ADMIN_STATE_UNKNOWN) {
-    RETURN_ERROR(ERR_INVALID_PARAM)
+    return MAKE_ERROR(ERR_INVALID_PARAM)
         << "Invalid admin state for port " << port_id << " in node " << node_id
         << " (SDK Port " << sdk_port_id << ").";
   }
   if (config_params.admin_state() == ADMIN_STATE_DIAG) {
-    RETURN_ERROR(ERR_UNIMPLEMENTED)
+    return MAKE_ERROR(ERR_UNIMPLEMENTED)
         << "Unsupported 'diags' admin state for port " << port_id << " in node "
         << node_id << " (SDK Port " << sdk_port_id << ").";
   }
@@ -387,7 +332,6 @@ bool DpdkChassisManager::IsPortParamSet(
       node_id_to_port_id_to_singleton_port_key;
   std::map<uint64, std::map<uint32, uint32>> node_id_to_port_id_to_sdk_port_id;
   std::map<uint64, std::map<uint32, uint32>> node_id_to_sdk_port_id_to_port_id;
-  std::map<uint64, std::map<uint32, uint32>> node_id_port_id_to_backend;
 
   {
     int unit = 0;
@@ -404,11 +348,10 @@ bool DpdkChassisManager::IsPortParamSet(
 
     auto* unit = gtl::FindOrNull(node_id_to_unit, node_id);
     if (unit == nullptr) {
-      RETURN_ERROR(ERR_INVALID_PARAM)
+      return MAKE_ERROR(ERR_INVALID_PARAM)
           << "Invalid ChassisConfig, unknown node id " << node_id
           << " for port " << port_id << ".";
     }
-    node_id_port_id_to_backend[node_id][port_id] = 0;
     node_id_to_port_id_to_port_state[node_id][port_id] = PORT_STATE_UNKNOWN;
     node_id_to_port_id_to_time_last_changed[node_id][port_id] =
         absl::UnixEpoch();
@@ -469,7 +412,7 @@ bool DpdkChassisManager::IsPortParamSet(
       // sanity-check: if admin_state is not ADMIN_STATE_UNKNOWN, then the port
       // was added and the speed_bps was set.
       if (!config_old->speed_bps) {
-        RETURN_ERROR(ERR_INTERNAL)
+        return MAKE_ERROR(ERR_INTERNAL)
             << "Invalid internal state in DpdkChassisManager, "
             << "speed_bps field should contain a value";
       }
@@ -510,7 +453,6 @@ bool DpdkChassisManager::IsPortParamSet(
       node_id_to_port_id_to_singleton_port_key;
   node_id_to_port_id_to_sdk_port_id_ = node_id_to_port_id_to_sdk_port_id;
   node_id_to_sdk_port_id_to_port_id_ = node_id_to_sdk_port_id_to_port_id;
-  node_id_port_id_to_backend_ = node_id_port_id_to_backend;
   initialized_ = true;
 
   return ::util::OkStatus();
@@ -632,14 +574,14 @@ bool DpdkChassisManager::IsPortParamSet(
   if (initialized_) {
     if (node_id_to_port_id_to_singleton_port_key !=
         node_id_to_port_id_to_singleton_port_key_) {
-      RETURN_ERROR(ERR_REBOOT_REQUIRED)
+      return MAKE_ERROR(ERR_REBOOT_REQUIRED)
           << "The switch is already initialized, but we detected the newly "
           << "pushed config requires a change in the port layout. The stack "
           << "needs to be rebooted to finish config push.";
     }
 
     if (node_id_to_unit != node_id_to_unit_) {
-      RETURN_ERROR(ERR_REBOOT_REQUIRED)
+      return MAKE_ERROR(ERR_REBOOT_REQUIRED)
           << "The switch is already initialized, but we detected the newly "
           << "pushed config requires a change in node_id_to_unit. The stack "
           << "needs to be rebooted to finish config push.";
@@ -818,7 +760,7 @@ DpdkChassisManager::GetPortConfig(uint64 node_id, uint32 port_id) const {
       break;
     }
     default:
-      RETURN_ERROR(ERR_INTERNAL) << "Not supported yet";
+      return MAKE_ERROR(ERR_INTERNAL) << "Not supported yet";
   }
   return resp;
 }
@@ -912,12 +854,12 @@ DpdkChassisManager::GetPortConfig(uint64 node_id, uint32 port_id) const {
     }
 
     if (!config.speed_bps) {
-      RETURN_ERROR(ERR_INTERNAL)
+      return MAKE_ERROR(ERR_INTERNAL)
           << "Invalid internal state in DpdkChassisManager, "
           << "speed_bps field should contain a value";
     }
     if (!config.fec_mode) {
-      RETURN_ERROR(ERR_INTERNAL)
+      return MAKE_ERROR(ERR_INTERNAL)
           << "Invalid internal state in DpdkChassisManager, "
           << "fec_mode field should contain a value";
     }
@@ -995,7 +937,6 @@ void DpdkChassisManager::CleanupInternalState() {
   node_id_to_port_id_to_singleton_port_key_.clear();
   node_id_to_port_id_to_sdk_port_id_.clear();
   node_id_to_sdk_port_id_to_port_id_.clear();
-  node_id_port_id_to_backend_.clear();
 }
 
 ::util::Status DpdkChassisManager::Shutdown() {
