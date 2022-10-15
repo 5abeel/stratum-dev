@@ -102,7 +102,7 @@ bool DpdkChassisManager::IsPortParamSet(
       LOG(INFO) << "Required parameters are configured, configure port via TDI";
       LOG(INFO) << "SDK_PORT ID while validating = " << sdk_port_id;
       RETURN_IF_ERROR(
-	  AddPortHelper(node_id, unit, sdk_port_id, singleton_port, &config));
+          AddPortHelper(node_id, unit, sdk_port_id, singleton_port, &config));
   }
   google::FlushLogFiles(google::INFO);
   return ::util::OkStatus();
@@ -125,32 +125,27 @@ bool DpdkChassisManager::IsPortParamSet(
   const auto& config_params = singleton_port.config_params();
   if (config_params.admin_state() == ADMIN_STATE_UNKNOWN) {
     return MAKE_ERROR(ERR_INVALID_PARAM)
-        << "Invalid admin state for port " << port_id << " in node " << node_id
+        << "Invalid admin state for port " << port_id
+        << " in node " << node_id
         << " (SDK Port " << sdk_port_id << ").";
   }
   if (config_params.admin_state() == ADMIN_STATE_DIAG) {
     return MAKE_ERROR(ERR_UNIMPLEMENTED)
-        << "Unsupported 'diags' admin state for port " << port_id << " in node "
-        << node_id << " (SDK Port " << sdk_port_id << ").";
+        << "Unsupported 'diags' admin state for port " << port_id
+        << " in node " << node_id
+        << " (SDK Port " << sdk_port_id << ").";
   }
 
-  LOG(INFO) << "Adding port " << port_id << " in node " << node_id
+  LOG(INFO) << "Adding port " << port_id
+            << " in node " << node_id
             << " (SDK Port " << sdk_port_id << ").";
 
   config->speed_bps = singleton_port.speed_bps();
   config->admin_state = ADMIN_STATE_DISABLED;
   config->fec_mode = config_params.fec_mode();
 
-  TdiSdeInterface::PortConfigParams sde_wrapper_config = {
-    .port_type = config->port_type,
-    .device_type = config->device_type,
-    .queues = config->queues,
-    .socket_path = config->socket_path,
-    .host_name = config->host_name,
-    .port_name = singleton_port.name(),
-  };
   RETURN_IF_ERROR(sde_interface_->AddPort(
-      unit, sdk_port_id, singleton_port.speed_bps(), sde_wrapper_config,
+      unit, sdk_port_id, singleton_port.speed_bps(), config->cfg,
       config_params.fec_mode()));
 
   if (config_params.mtu() != 0) {

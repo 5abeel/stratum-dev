@@ -1257,7 +1257,7 @@ dpdk_port_type_t get_target_port_type(SWBackendPortType type) {
 }
 
 ::util::Status TdiSdeWrapper::AddPort(int device, int port, uint64 speed_bps,
-                                     FecMode fec_mode) {
+                                      FecMode fec_mode) {
 #ifdef DPDK_TARGET
   auto port_attrs = absl::make_unique<port_attributes_t>();
   RETURN_IF_TDI_ERROR(bf_pal_port_add(static_cast<bf_dev_id_t>(device),
@@ -1275,8 +1275,8 @@ dpdk_port_type_t get_target_port_type(SWBackendPortType type) {
 }
 
 ::util::Status TdiSdeWrapper::AddPort(
-    int device, int port, uint64 speed_bps, PortConfigParams& config,
-    FecMode fec_mode) {
+    int device, int port, uint64 speed_bps,
+    const PortConfigParams& config, FecMode fec_mode) {
   static int port_in;
   static int port_out;
 
